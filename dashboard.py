@@ -11,6 +11,7 @@ import json
 import queue
 import threading
 import time
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import psycopg
@@ -97,6 +98,56 @@ def fetch_stats() -> dict:
     return out
 
 
+# named status groups the browse filter understands, mapped to a SQL predicate
+_FILTERS = {
+    "all": "true",
+    "passing": "status IN ('pass','pass_trivial')",
+    "async_direct": "status = 'fail_async_direct'",
+    "async_dep": "status = 'fail_async_dep'",
+    "async_any": "status IN ('fail_async_direct','fail_async_dep')",
+    "other": "status = 'fail_other'",
+    "excluded": "status IN ('excluded_broken','excluded_resolve','excluded_resource')",
+}
+# every exact status is also a valid filter key (for clicking a breakdown row);
+# values are a fixed whitelist so the interpolation is safe.
+for _s in ("pass", "pass_trivial", "fail_async_direct", "fail_async_dep", "fail_other",
+           "excluded_broken", "excluded_resolve", "excluded_resource", "harness_error"):
+    _FILTERS.setdefault(_s, f"status = '{_s}'")
+_ORDERS = {"popular": "pop_rank ASC", "recent": "finished_at DESC NULLS LAST",
+           "slowest": "wall_ms DESC NULLS LAST"}
+
+
+def browse_crates(params: dict) -> dict:
+    """Filtered, paginated crate list for the drill-down."""
+    filt = _FILTERS.get(params.get("filter", ["all"])[0], "true")
+    order = _ORDERS.get(params.get("order", ["popular"])[0], _ORDERS["popular"])
+    q = (params.get("q", [""])[0] or "").strip()
+    blamed = (params.get("blamed", [""])[0] or "").strip()
+    try:
+        limit = min(200, max(1, int(params.get("limit", ["50"])[0])))
+        offset = max(0, int(params.get("offset", ["0"])[0]))
+    except ValueError:
+        limit, offset = 50, 0
+    where = [filt]
+    args: list = []
+    if q:
+        where.append("crate_name ILIKE %s"); args.append(f"%{q}%")
+    if blamed:
+        where.append("blamed_crate_name = %s"); args.append(blamed)
+    wc = " AND ".join(where)
+    with psycopg.connect(DSN, autocommit=True) as conn:
+        total = conn.execute(
+            f"SELECT count(*) FROM noasync.current_results WHERE {wc}", args).fetchone()[0]
+        cur = conn.execute(
+            f"""SELECT crate_name, version_num, pop_rank, downloads, status,
+                       blamed_crate_name, async_construct, wall_ms
+                FROM noasync.current_results WHERE {wc}
+                ORDER BY {order} LIMIT %s OFFSET %s""", [*args, limit, offset])
+        cols = [d.name for d in cur.description]
+        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    return {"total": total, "offset": offset, "limit": limit, "rows": rows}
+
+
 class Hub:
     def __init__(self) -> None:
         self._clients: set[queue.Queue] = set()
@@ -167,6 +218,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, "text/html; charset=utf-8", PAGE.encode())
         elif self.path == "/api/stats":
             self._send(200, "application/json", json.dumps(fetch_stats(), default=str).encode())
+        elif self.path.startswith("/api/crates"):
+            qs = urllib.parse.urlparse(self.path).query
+            params = urllib.parse.parse_qs(qs, keep_blank_values=True)
+            try:
+                body = json.dumps(browse_crates(params), default=str).encode()
+                self._send(200, "application/json", body)
+            except Exception as e:
+                self._send(500, "application/json", json.dumps({"error": str(e)}).encode())
         elif self.path == "/events":
             self._sse()
         else:
@@ -242,6 +301,17 @@ pre{margin:2px 0 0;font-size:11px;color:var(--sec);white-space:pre-wrap;word-bre
 h2{font-size:14px;color:var(--sec);margin:0 0 10px;font-weight:600}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:760px){.grid2{grid-template-columns:1fr}}
 .dot{color:var(--muted);font-size:12px}
+.filters{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:10px}
+.fbtn{font:inherit;font-size:12px;padding:4px 10px;border:1px solid var(--grid);background:var(--surface);
+color:var(--sec);border-radius:14px;cursor:pointer}
+.fbtn.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+#bq{font:inherit;font-size:13px;padding:4px 10px;border:1px solid var(--grid);border-radius:8px;
+background:var(--surface);color:var(--ink);min-width:140px}
+#border{font:inherit;font-size:12px;padding:4px 6px;border:1px solid var(--grid);border-radius:8px;background:var(--surface);color:var(--ink)}
+.pager{display:flex;gap:12px;align-items:center;margin-top:10px}
+.pager button{font:inherit;font-size:12px;padding:4px 12px;border:1px solid var(--grid);background:var(--surface);
+color:var(--ink);border-radius:8px;cursor:pointer}.pager button:disabled{opacity:.4;cursor:default}
+tr.clk{cursor:pointer}tr.clk:hover td{background:var(--bg)}
 </style></head><body><div class="wrap">
 <h1>rust-noasync — crates.io survival survey</h1>
 <div class="sub" id="sub">connecting…</div>
@@ -255,8 +325,25 @@ h2{font-size:14px;color:var(--sec);margin:0 0 10px;font-weight:600}
 
 <div class="kpis" id="kpis"></div>
 
-<div class="card"><h2>overall outcome breakdown</h2>
+<div class="card"><h2>overall outcome breakdown <span class="dot">(click a row to browse)</span></h2>
   <div class="stack" id="stack"></div><table id="overall"></table></div>
+
+<div class="card"><h2>browse crates</h2>
+  <div class="filters">
+    <button class="fbtn on" data-f="all">all</button>
+    <button class="fbtn" data-f="passing">passing</button>
+    <button class="fbtn" data-f="async_direct">async (direct)</button>
+    <button class="fbtn" data-f="async_dep">async (dep)</button>
+    <button class="fbtn" data-f="excluded">excluded</button>
+    <button class="fbtn" data-f="other">fail_other</button>
+    <input id="bq" placeholder="search name…" autocomplete="off">
+    <select id="border"><option value="popular">by downloads</option>
+      <option value="recent">most recent</option><option value="slowest">slowest</option></select>
+  </div>
+  <table id="btable"></table>
+  <div class="pager"><button id="bprev">‹ prev</button>
+    <span id="brange" class="dot"></span><button id="bnext">next ›</button></div>
+</div>
 
 <div class="grid2">
   <div class="card"><h2>survival by popularity</h2><div id="buckets"></div></div>
@@ -288,18 +375,55 @@ function render(d){
  const ov=d.overall||[],tot=ov.reduce((a,r)=>a+Number(r.n),0)||1;
  $('stack').innerHTML=ov.map(r=>`<div class="seg" style="width:${100*r.n/tot}%;background:${C[r.status]||'var(--excl)'}" title="${esc(r.status)}: ${r.n}"></div>`).join('');
  $('overall').innerHTML='<tr><th></th><th>status</th><th class="n">n</th><th class="n">%</th></tr>'+
-  ov.map(r=>`<tr><td><span class="chip" style="background:${C[r.status]||'var(--excl)'}"></span></td><td>${esc(r.status)}</td><td class="n">${fmt(r.n)}</td><td class="n">${esc(r.pct)}</td></tr>`).join('');
+  ov.map(r=>`<tr class="clk" data-status="${esc(r.status)}"><td><span class="chip" style="background:${C[r.status]||'var(--excl)'}"></span></td><td>${esc(r.status)}</td><td class="n">${fmt(r.n)}</td><td class="n">${esc(r.pct)}</td></tr>`).join('');
  const bmax=100;
  $('buckets').innerHTML=(d.buckets||[]).map(b=>`<div class="row"><span class="lab">${esc(b.label)}</span><div class="bar" style="width:${(b.survival_pct||0)/bmax*260}px"></div><span class="val">${b.survival_pct==null?'—':b.survival_pct+'%'} (${fmt(b.passed)}/${fmt(b.denom)})</span></div>`).join('')||'<div class=dot>no data</div>';
  const bl=d.top_blamed||[],kmax=Math.max(1,...bl.map(r=>Number(r.kills)));
- $('blamed').innerHTML=bl.map(r=>`<div class="row"><span class="lab">${esc(r.culprit)}</span><div class="bar" style="width:${r.kills/kmax*220}px;background:var(--dep)"></div><span class="val">${fmt(r.kills)} <span class=dot>(${r.direct}d/${r.as_dependency}dep)</span></span></div>`).join('')||'<div class=dot>no async failures yet</div>';
+ $('blamed').innerHTML=bl.map(r=>`<div class="row clk" data-culprit="${esc(r.culprit)}" title="click to list crates blamed on ${esc(r.culprit)}"><span class="lab">${esc(r.culprit)}</span><div class="bar" style="width:${r.kills/kmax*220}px;background:var(--dep)"></div><span class="val">${fmt(r.kills)} <span class=dot>(${r.direct}d/${r.as_dependency}dep)</span></span></div>`).join('')||'<div class=dot>no async failures yet</div>';
  $('workers').innerHTML='<tr><th>worker</th><th>crate</th><th>q</th><th class="n">s</th></tr>'+
   (d.workers||[]).map(w=>`<tr><td>${esc(w.claimed_by)}</td><td>${esc(w.crate_name)} ${esc(w.version_num)}</td><td>${esc(w.claimed_via)}</td><td class="n">${fmt(w.running_s)}</td></tr>`).join('');
  $('recent').innerHTML='<tr><th>crate</th><th>status</th><th>blame</th><th>error</th></tr>'+
   (d.recent||[]).map(r=>`<tr><td>${esc(r.crate_name)} ${esc(r.version_num)}</td><td><span class="chip" style="background:${C[r.status]||'var(--excl)'}"></span>${esc(r.status)}</td><td>${esc(r.blamed_crate_name||'')}</td><td><pre>${esc(r.first_error||'')}</pre></td></tr>`).join('');
 }
+// ---- browse drill-down ----
+const B={filter:'all',q:'',blamed:'',order:'popular',offset:0,limit:50,total:0};
+function loadBrowse(){
+  const p=new URLSearchParams({filter:B.filter,q:B.q,blamed:B.blamed,order:B.order,offset:B.offset,limit:B.limit});
+  fetch('/api/crates?'+p).then(r=>r.json()).then(renderBrowse).catch(()=>{});
+}
+function renderBrowse(d){
+  if(!d||d.error){return;}
+  B.total=d.total;
+  $('btable').innerHTML='<tr><th class="n">#</th><th>crate</th><th>status</th><th>blame / construct</th><th class="n">ms</th></tr>'+
+   (d.rows||[]).map(r=>`<tr><td class="n">${fmt(r.pop_rank)}</td><td>${esc(r.crate_name)} <span class=dot>${esc(r.version_num)}</span></td>`+
+    `<td><span class="chip" style="background:${C[r.status]||'var(--excl)'}"></span>${esc(r.status)}</td>`+
+    `<td>${esc(r.blamed_crate_name||r.async_construct||'')}</td><td class="n">${r.wall_ms==null?'':fmt(r.wall_ms)}</td></tr>`).join('')
+    ||'<tr><td colspan=5 class=dot>no crates match</td></tr>';
+  const from=d.total?d.offset+1:0, to=Math.min(d.offset+d.limit,d.total);
+  $('brange').textContent=`${fmt(from)}–${fmt(to)} of ${fmt(d.total)}`+(B.blamed?` · blamed on ${B.blamed}`:'');
+  $('bprev').disabled=d.offset<=0; $('bnext').disabled=to>=d.total;
+}
+function browseBy(filter, blamed){
+  B.filter=filter; B.blamed=blamed||''; B.q=''; B.offset=0; $('bq').value='';
+  document.querySelectorAll('.fbtn').forEach(x=>x.classList.toggle('on',x.dataset.f===filter));
+  loadBrowse(); $('btable').scrollIntoView({behavior:'smooth',block:'center'});
+}
+document.querySelectorAll('.fbtn').forEach(b=>b.onclick=()=>browseBy(b.dataset.f,''));
+let bt;$('bq').oninput=e=>{clearTimeout(bt);bt=setTimeout(()=>{B.q=e.target.value;B.offset=0;loadBrowse();},250);};
+$('border').onchange=e=>{B.order=e.target.value;B.offset=0;loadBrowse();};
+$('bprev').onclick=()=>{B.offset=Math.max(0,B.offset-B.limit);loadBrowse();};
+$('bnext').onclick=()=>{B.offset+=B.limit;loadBrowse();};
+// clicking a status row or a culprit drills in
+document.addEventListener('click',ev=>{
+  const s=ev.target.closest('[data-status]'); if(s){browseBy(s.dataset.status,'');return;}
+  const c=ev.target.closest('[data-culprit]'); if(c){browseBy('async_any',c.dataset.culprit);}
+});
+loadBrowse();
+
 const es=new EventSource('/events');
-es.onmessage=e=>{try{render(JSON.parse(e.data))}catch(x){}};
+es.onmessage=e=>{try{const d=JSON.parse(e.data);render(d);
+  if(B.offset===0 && document.activeElement!==$('bq')) loadBrowse();  // keep the head live
+}catch(x){}};
 es.onerror=()=>{$('sub').textContent='reconnecting…';};
 </script></body></html>"""
 

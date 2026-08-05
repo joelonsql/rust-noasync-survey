@@ -251,6 +251,8 @@ def main():
     ap.add_argument("--workers", type=int, default=config.WORKERS)
     ap.add_argument("--queue", choices=["popular", "random"],
                     help="force a single queue (default: 3 popular : 1 random)")
+    ap.add_argument("--minutes", type=float,
+                    help="stop cleanly after this many minutes (time-boxed chunk)")
     args = ap.parse_args()
 
     os.makedirs(config.SPOOL_DIR, exist_ok=True)
@@ -274,6 +276,10 @@ def main():
     print(f"toolchains: fork={fork_tc} control={control_tc}")
 
     limiter = Limiter(args.limit) if args.limit else None
+    if args.minutes:
+        threading.Thread(target=lambda: STOP.wait(args.minutes * 60) or STOP.set(),
+                         daemon=True).start()
+        print(f"time-boxed: will stop after {args.minutes} min")
     threading.Thread(target=heartbeat_loop, daemon=True).start()
     threading.Thread(target=sweep_loop, daemon=True).start()
 
