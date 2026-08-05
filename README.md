@@ -14,7 +14,8 @@ after every crate.
 ## Results so far
 
 _Snapshot at 3,867 / 303,131 crates probed (1.3%). Numbers move as the run
-progresses; the dashboard is live._
+progresses; the dashboard is live. Regenerate this image with
+`./make-screenshot.sh`._
 
 ![dashboard](docs/dashboard.png)
 
