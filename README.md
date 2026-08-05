@@ -13,27 +13,27 @@ after every crate.
 
 ## Results so far
 
-_Snapshot at 3,867 / 303,131 crates probed (1.3%). Numbers move as the run
+_Snapshot at 23,305 / 303,131 crates probed (7.7%). Numbers move as the run
 progresses; the dashboard is live. Regenerate this image with
 `./make-screenshot.sh`._
 
 ![dashboard](docs/dashboard.png)
 
-- **Projected whole-registry survival: ~62.5%** (95% CI 59.2–65.7%), from the
-  uniform random sample (n=846). This is the unbiased estimate for *all* of
-  crates.io.
+- **Projected whole-registry survival: ~63.7%** (95% CI 62.4–65.0%), from the
+  uniform random sample (n≈5,400). This is the unbiased estimate for *all* of
+  crates.io, and it is tightening as the sample grows.
 - **Survival climbs steeply with popularity**: top 100 → **96.0%**, top 1k →
-  **89.2%**, top 10k → **86.8%**. The most-used crates are far more likely to
+  **89.2%**, top 10k → **79.9%**. The most-used crates are far more likely to
   survive than the long tail.
-- **Outcome mix** of the 3,867 probed: 75.9% pass, 16.0% fail on an async
-  dependency, 1.5% fail on their own async, 5.4% excluded (also broken on stock
-  stable), 1.0% unresolvable. The `fail_other` canary (fork fails where stock
-  passes) sits at **2** — essentially zero, so the fork isn't breaking sync code.
-- **Blame concentrates on two crates**: **`tokio`** (290 crates, almost all
-  transitively) and — notably — **`cc`** (144 crates, *all* transitively).
+- **Outcome mix** of the ~23k probed: 66.8% pass, 24.9% fail on an async
+  dependency, 1.4% fail on their own async, 6.0% excluded (also broken on stock
+  stable), 0.9% unresolvable. The `fail_other` canary (fork fails where stock
+  passes) sits at **5** — negligible, so the fork isn't breaking sync code.
+- **Blame concentrates on two crates**: **`tokio`** (~2,590 crates, almost all
+  transitively) and — notably — **`cc`** (~1,727 crates, *all* transitively).
   Recent `cc` versions use an `async` block in their parallel command runner,
   so many `-sys` crates that compile C code fail through it. Then `futures-lite`
-  (35), `glib` (26), and a long tail.
+  (~290) and a long tail.
 
 ## Architecture
 
