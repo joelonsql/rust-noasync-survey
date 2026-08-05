@@ -50,10 +50,10 @@ orchestrator/         config, runner (container exec), lifecycle, classify, orch
 
 ```sh
 PGBIN=/Applications/Postgres.app/Contents/Versions/18/bin
-SURVEY=/Users/joel/rust-noasync-survey
+SURVEY="$HOME/rust-noasync-survey"   # or wherever you cloned this repo
 
 # 1. dedicated cluster (port 5433, own data dir, tuned for bulk load)
-"$PGBIN/initdb" -D "$SURVEY/pgdata" --encoding=UTF8 --locale=C -U joel
+"$PGBIN/initdb" -D "$SURVEY/pgdata" --encoding=UTF8 --locale=C -U "$(whoami)"
 #   append port=5433, listen_addresses='127.0.0.1', shared_buffers=8GB,
 #   maintenance_work_mem=8GB, work_mem=256MB to pgdata/postgresql.conf
 #   (fsync=off during import; ALTER SYSTEM SET fsync=on afterwards)
@@ -84,7 +84,7 @@ container build -t noasync-probe:v1 --target probe -f Containerfile ctx
 ## Running
 
 ```sh
-cd /Users/joel/rust-noasync-survey
+cd "$HOME/rust-noasync-survey"                    # or your clone path
 ulimit -n 4096 && python3 dashboard.py &          # http://127.0.0.1:8787
 
 # full run (both queues, 6 workers, until drained):

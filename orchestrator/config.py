@@ -1,5 +1,9 @@
 """Orchestrator configuration for the rust-noasync crates.io survey."""
-SURVEY = "/Users/joel/rust-noasync-survey"
+import os
+
+# Repo root: derived from this file's location (orchestrator/config.py), so the
+# survey works wherever it is cloned. Override with SURVEY_ROOT if needed.
+SURVEY = os.environ.get("SURVEY_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 IMAGE = "noasync-probe:v1"
 
 # worker pool
