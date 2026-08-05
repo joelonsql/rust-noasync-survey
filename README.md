@@ -11,14 +11,28 @@ after confirming it also fails on stock stable Rust).
 Results live in a dedicated PostgreSQL cluster; a live web dashboard updates
 after every crate.
 
-## Result so far (top-100 by downloads)
+## Results so far
 
-**96% survival** (96/100). The only failures: `tokio` (#63, direct), and
-`hyper` (#66), `rustls` (#67), `h2` (#94) via dependencies. Blame concentrates
-on **tokio** and — notably — **`cc`**, whose recent versions use an `async`
-block in their parallel command runner, so many `-sys` crates that compile C
-code fail transitively. The whole-registry number will be lower once the long
-tail (async-heavy crates, missing-system-lib exclusions) is probed.
+_Snapshot at 3,867 / 303,131 crates probed (1.3%). Numbers move as the run
+progresses; the dashboard is live._
+
+![dashboard](docs/dashboard.png)
+
+- **Projected whole-registry survival: ~62.5%** (95% CI 59.2–65.7%), from the
+  uniform random sample (n=846). This is the unbiased estimate for *all* of
+  crates.io.
+- **Survival climbs steeply with popularity**: top 100 → **96.0%**, top 1k →
+  **89.2%**, top 10k → **86.8%**. The most-used crates are far more likely to
+  survive than the long tail.
+- **Outcome mix** of the 3,867 probed: 75.9% pass, 16.0% fail on an async
+  dependency, 1.5% fail on their own async, 5.4% excluded (also broken on stock
+  stable), 1.0% unresolvable. The `fail_other` canary (fork fails where stock
+  passes) sits at **2** — essentially zero, so the fork isn't breaking sync code.
+- **Blame concentrates on two crates**: **`tokio`** (290 crates, almost all
+  transitively) and — notably — **`cc`** (144 crates, *all* transitively).
+  Recent `cc` versions use an `async` block in their parallel command runner,
+  so many `-sys` crates that compile C code fail through it. Then `futures-lite`
+  (35), `glib` (26), and a long tail.
 
 ## Architecture
 

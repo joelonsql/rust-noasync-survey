@@ -214,7 +214,8 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        if self.path == "/" or self.path.startswith("/index"):
+        path = urllib.parse.urlparse(self.path).path
+        if path == "/" or path.startswith("/index"):
             self._send(200, "text/html; charset=utf-8", PAGE.encode())
         elif self.path == "/api/stats":
             self._send(200, "application/json", json.dumps(fetch_stats(), default=str).encode())
@@ -420,11 +421,17 @@ document.addEventListener('click',ev=>{
 });
 loadBrowse();
 
-const es=new EventSource('/events');
-es.onmessage=e=>{try{const d=JSON.parse(e.data);render(d);
-  if(B.offset===0 && document.activeElement!==$('bq')) loadBrowse();  // keep the head live
-}catch(x){}};
-es.onerror=()=>{$('sub').textContent='reconnecting…';};
+// `?static` renders one snapshot with no persistent SSE connection (for
+// headless screenshots and offline viewing); otherwise stream live.
+if(location.search.indexOf('static')>=0){
+  fetch('/api/stats').then(r=>r.json()).then(render).catch(()=>{});
+}else{
+  const es=new EventSource('/events');
+  es.onmessage=e=>{try{const d=JSON.parse(e.data);render(d);
+    if(B.offset===0 && document.activeElement!==$('bq')) loadBrowse();  // keep the head live
+  }catch(x){}};
+  es.onerror=()=>{$('sub').textContent='reconnecting…';};
+}
 </script></body></html>"""
 
 
