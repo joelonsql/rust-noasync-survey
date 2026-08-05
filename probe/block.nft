@@ -1,0 +1,8 @@
+# Fallback egress-drop ruleset (rung 3 of the net-off ladder), used only if
+# `unshare -Ur -n` is unavailable. Drops all output except loopback.
+table inet filter {
+    chain output {
+        type filter hook output priority 0; policy drop;
+        oif "lo" accept
+    }
+}

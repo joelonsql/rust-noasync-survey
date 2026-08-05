@@ -1,0 +1,10 @@
+/pgdata/
+/dump/
+/cache/
+/logs/
+/toolchain/dist/
+/backups/
+*.pyc
+__pycache__/
+/container/ctx/toolchain-dist/
+/container/ctx/probe/

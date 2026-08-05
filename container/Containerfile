@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1
+# Two-stage: `base` = apt build environment; `probe` = + toolchains + verify gate.
+FROM ubuntu:24.04 AS base
+ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
+COPY apt-packages.txt /tmp/apt-packages.txt
+RUN apt-get update \
+ && sed -e 's/#.*//' -e '/^\s*$/d' /tmp/apt-packages.txt | xargs apt-get install -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/*
+
+FROM base AS probe
+# Stock stable control toolchain, pinned, from the official standalone dist tarball.
+ARG STABLE_VER=1.97.1
+RUN curl -sSfL "https://static.rust-lang.org/dist/rust-${STABLE_VER}-aarch64-unknown-linux-gnu.tar.xz" -o /tmp/r.tar.xz \
+ && mkdir -p /tmp/rust && tar -xJf /tmp/r.tar.xz -C /tmp/rust --strip-components 1 \
+ && /tmp/rust/install.sh --prefix=/opt/rust-stable \
+      --components=rustc,cargo,rust-std-aarch64-unknown-linux-gnu \
+ && rm -rf /tmp/r.tar.xz /tmp/rust
+# Fork toolchain, built separately and baked in.
+COPY toolchain-dist/rust-noasync-linux.tar.zst /tmp/fork.tar.zst
+RUN zstd -dc /tmp/fork.tar.zst | tar -x -C /opt && rm /tmp/fork.tar.zst
+# Probe script baked as a fallback; /probe is bind-mounted read-only at run time.
+COPY probe/ /probe-baked/
+COPY verify-toolchain.sh /usr/local/bin/verify-toolchain.sh
+# PATH must include the fork bin BEFORE the verify RUN so `cargo` finds `rustc`.
+ENV PATH=/opt/rust-noasync/bin:/usr/local/bin:/usr/bin:/bin
+RUN chmod +x /usr/local/bin/verify-toolchain.sh && /usr/local/bin/verify-toolchain.sh
+RUN mkdir -p /work /cache/crates /cache/cargo-home

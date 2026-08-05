@@ -1,0 +1,23 @@
+# rust-noasync bootstrap configuration (aarch64-unknown-linux-gnu, container build).
+# No `profile =` on purpose (dist profile disables download-ci-llvm; library
+# profile sets download-rustc="if-unchanged" which would skip our rustc).
+change-id = "ignore"
+
+[llvm]
+download-ci-llvm = true          # aarch64-unknown-linux-gnu is in SUPPORTED_PLATFORMS (download.rs)
+
+[build]
+extended = true
+tools = ["rustdoc"]              # cargo deliberately absent: its source is async; stage-1 trick instead
+docs = false
+description = "rust-noasync"
+optimized-compiler-builtins = false   # avoids llvm-project submodule even with CI LLVM
+
+[rust]
+channel = "stable"               # locks users' #![feature]; matches the stock-stable control
+download-rustc = false           # our rustc (with the ban) must compile library/
+
+[install]
+prefix = "/opt/rust-noasync"
+sysconfdir = "etc"               # MUST stay relative (absolute /etc escapes prefix, fails assert)
+docdir = "share/doc/rust"
