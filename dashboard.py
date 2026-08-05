@@ -395,11 +395,12 @@ function loadBrowse(){
 function renderBrowse(d){
   if(!d||d.error){return;}
   B.total=d.total;
-  $('btable').innerHTML='<tr><th class="n">#</th><th>crate</th><th>status</th><th>blame / construct</th><th class="n">ms</th></tr>'+
+  $('btable').innerHTML='<tr><th class="n">#</th><th>crate</th><th class="n">downloads</th><th>status</th><th>blame / construct</th><th class="n">ms</th></tr>'+
    (d.rows||[]).map(r=>`<tr><td class="n">${fmt(r.pop_rank)}</td><td>${esc(r.crate_name)} <span class=dot>${esc(r.version_num)}</span></td>`+
+    `<td class="n">${fmt(r.downloads)}</td>`+
     `<td><span class="chip" style="background:${C[r.status]||'var(--excl)'}"></span>${esc(r.status)}</td>`+
     `<td>${esc(r.blamed_crate_name||r.async_construct||'')}</td><td class="n">${r.wall_ms==null?'':fmt(r.wall_ms)}</td></tr>`).join('')
-    ||'<tr><td colspan=5 class=dot>no crates match</td></tr>';
+    ||'<tr><td colspan=6 class=dot>no crates match</td></tr>';
   const from=d.total?d.offset+1:0, to=Math.min(d.offset+d.limit,d.total);
   $('brange').textContent=`${fmt(from)}–${fmt(to)} of ${fmt(d.total)}`+(B.blamed?` · blamed on ${B.blamed}`:'');
   $('bprev').disabled=d.offset<=0; $('bnext').disabled=to>=d.total;
