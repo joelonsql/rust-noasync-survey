@@ -11,29 +11,39 @@ after confirming it also fails on stock stable Rust).
 Results live in a dedicated PostgreSQL cluster; a live web dashboard updates
 after every crate.
 
-## Results so far
+## Results
 
-_Snapshot at 23,305 / 303,131 crates probed (7.7%). Numbers move as the run
-progresses; the dashboard is live. Regenerate this image with
+_Complete: all 303,131 crates probed. Regenerate the image with
 `./make-screenshot.sh`._
 
 ![dashboard](docs/dashboard.png)
 
-- **Projected whole-registry survival: ~63.7%** (95% CI 62.4–65.0%), from the
-  uniform random sample (n≈5,400). This is the unbiased estimate for *all* of
-  crates.io, and it is tightening as the sample grows.
-- **Survival climbs steeply with popularity**: top 100 → **96.0%**, top 1k →
-  **89.2%**, top 10k → **79.9%**. The most-used crates are far more likely to
-  survive than the long tail.
-- **Outcome mix** of the ~23k probed: 66.8% pass, 24.9% fail on an async
-  dependency, 1.4% fail on their own async, 6.0% excluded (also broken on stock
-  stable), 0.9% unresolvable. The `fail_other` canary (fork fails where stock
-  passes) sits at **5** — negligible, so the fork isn't breaking sync code.
-- **Blame concentrates on two crates**: **`tokio`** (~2,590 crates, almost all
-  transitively) and — notably — **`cc`** (~1,727 crates, *all* transitively).
-  Recent `cc` versions use an `async` block in their parallel command runner,
-  so many `-sys` crates that compile C code fail through it. Then `futures-lite`
-  (~290) and a long tail.
+**71.0% of build-compatible crates survive rust-noasync** (148,228 of 208,785).
+Of *all* 303,131 crates, 48.9% pass outright.
+
+- **What "build-compatible" means.** 94,346 crates (31%) are excluded from the
+  denominator because they don't build on **stock stable Rust** either:
+  25.3% (76,613) whose latest version won't even resolve — overwhelmingly
+  (97.5%) the abandoned deep tail (`kernel32-sys`, `ws2_32-sys`, `encoding`, …
+  with yanked/vanished dependencies) — and 5.7% (17,364) that fail to compile on
+  stock too (missing system libs, nightly-only, MSRV). The 71% is survival among
+  crates that actually build on today's stable Rust.
+- **20.0% of all crates fail specifically on async** (60,522): 58,507 through an
+  async dependency and only 2,015 on async in their own code. Async breakage is
+  overwhelmingly **transitive** — a crate inherits it from deep in its tree.
+- **Survival tracks popularity, non-monotonically**: top 100 → **96.0%**, top 1k
+  → **89.2%**, top 10k → **79.9%**, top 100k → **65.7%**, all → **71.0%**. The
+  mid-tail (the modern async-era ecosystem) is hit hardest; the deep tail
+  recovers, being mostly old, simple, pre-async sync libraries.
+- **The `fail_other` canary — crates the fork breaks but stock stable compiles —
+  is 35 (0.01%)**, so the fork essentially never breaks otherwise-good sync code.
+- **Blame concentrates hard**: **`tokio`** (31,029 crates, all but one
+  transitively) and — notably — **`cc`** (14,480, *entirely* transitively).
+  Recent `cc` versions use an `async` block in their parallel command runner (a
+  hand-rolled single-thread executor, not a real async runtime), so any
+  dependency graph that enables `cc`'s `parallel` feature — via `zstd-sys`,
+  `aws-lc-sys`, `libgit2-sys`, … — fails through it. Then `futures-lite` (3,033),
+  `async-task` (1,390), `axum-core` (992), `js-sys` (890), `glib` (648), tail.
 
 ## Architecture
 
@@ -113,7 +123,8 @@ python3 orchestrator/orchestrator.py --fixtures orchestrator/fixtures_run.py  # 
 The DB is the only state: kill the orchestrator any time (SIGINT finishes
 in-flight probes), rerun to resume. `sweep_stale` reclaims a dead worker's
 probes after 15 min; the orchestrator heartbeats live claims every 60s.
-Estimated full run: ~2 weeks (~900 probes/hr steady) for 303,131 probes.
+The full 303,131-crate run took ~4 days on an M3 Max (6 workers, warm caches),
+faster than the original ~2-week estimate.
 
 ## Notes / caveats
 
