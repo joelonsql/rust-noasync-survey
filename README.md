@@ -45,6 +45,56 @@ Of *all* 303,131 crates, 48.9% pass outright.
   `aws-lc-sys`, `libgit2-sys`, … — fails through it. Then `futures-lite` (3,033),
   `async-task` (1,390), `axum-core` (992), `js-sys` (890), `glib` (648), tail.
 
+## What if `cc` were rewritten to avoid async?
+
+`cc` is the standout result: 14,480 crates fail through it, *entirely*
+transitively, yet its async isn't "real" async at all — it's a hand-rolled,
+single-threaded cooperative executor used to run several C-compiler processes at
+once (`make -jN`), gated behind the off-by-default `parallel` feature that
+downstream `-sys` crates enable. So: how much would survival recover if `cc`
+dropped the `async` syntax?
+
+**The ceiling is ~77.9%** — if all 14,480 cc-blamed crates flipped to pass,
+survival would rise from 71.0% to `(148,228 + 14,480) / 208,785`. But most
+wouldn't flip: **6,183 of them also depend directly on `tokio`** (and other
+genuine async runtimes), so with `cc` fixed they'd simply re-fail on that
+instead. That caps the real gain at ~8,297 crates, i.e. **~75.0%**, and the true
+figure is a little lower once *transitive* async dependencies are counted.
+
+**Realistic estimate: 71.0% → ~74–75%, about +3–4 points, from fixing a single
+crate.** (The exact number needs a re-probe with a patched `cc`; the harness
+supports it via `[patch.crates-io]`.)
+
+### Why the rewrite is doable
+
+`cc` is already 90% of the way there. It deliberately pulls no dependencies, so
+it hand-rolls its own executor in `src/parallel/async_executor.rs` — a `block_on`
+that polls two futures in a loop with a no-op waker, plus a manual
+`impl Future for YieldOnce`. **None of that is async *syntax***; it's exactly the
+poll-based `Future`/`Waker` machinery the fork keeps. The only async syntax in
+the whole crate is **two `async {}` blocks and two `.await`s in one 175-line
+file** (`command_runner.rs`): a `wait_future` that reaps finished child processes
+and a `spawn_future` that acquires jobserver tokens and launches new compiles.
+Turning those two blocks into explicit hand-written `Future` state machines (or
+folding them into one plain interleaved loop over the existing `block_on`) is a
+~100–150 line mechanical change, no new dependencies, no behaviour change.
+
+### Trade-offs
+
+- **Readability** is the real cost, and the reason `cc` used async in the first
+  place: `async`/`.await` is precisely the sugar that makes two interleaved state
+  machines legible. A hand-written state machine or manually interleaved
+  spawn/reap/backoff loop is more verbose and easier to get subtly wrong
+  (token accounting, pipe-disconnect handling, the sleep backoff).
+- **Maintenance divergence**: unless upstreamed it's a `cc` fork that must track
+  a very actively developed crate, applied per-project via `[patch.crates-io]`.
+  Upstream is unlikely to drop async for a niche toolchain.
+- **It doesn't generalize.** `cc` is the *benign* case — cooperative polling that
+  happens to be spelled `async`. The dominant blocker, `tokio` (31,029 crates),
+  and the ecosystem it anchors are genuine async-runtime code that can't be
+  desugared away. Fixing `cc` is a one-off that recovers the largest single
+  chunk; the rest of the gap is "real" async by design.
+
 ## Architecture
 
 - **Host**: a dedicated, disposable PostgreSQL 18 cluster (port 5433) holding
